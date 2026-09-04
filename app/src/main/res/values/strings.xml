@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DoNotTryAccessibility Reborn</string>
+    <string name="status_loading">正在连接 LSPosed 服务…</string>
+    <string name="status_no_service">未检测到 LSPosed 服务。请确认：\n1. 已安装 LSPosed 2.2+（API 102）\n2. 本模块已在管理器中启用\n3. 勾选生效需要重启设备（作用域为系统框架）</string>
+    <string name="status_service">已连接：%1$s %2$s（API %3$d）\n勾选的应用将被屏蔽无障碍读取。</string>
+    <string name="hook_active">Hook：已激活（%1$s 注入）</string>
+    <string name="hook_active_no_time">Hook：已激活</string>
+    <string name="hook_inactive">Hook：未激活（在 LSPosed 中启用模块并重启后生效）</string>
+    <string name="deep_hide">深度隐藏（隐藏已安装的无障碍服务列表）</string>
+    <string name="show_system">显示系统应用</string>
+    <string name="search_hint">搜索应用名称或包名</string>
+</resources>
