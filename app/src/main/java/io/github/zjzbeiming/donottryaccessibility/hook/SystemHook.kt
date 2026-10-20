@@ -1,5 +1,6 @@
 package io.github.zjzbeiming.donottryaccessibility.hook
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ContentProvider
 import android.os.Binder
 import android.os.Bundle
@@ -10,43 +11,49 @@ import java.lang.reflect.Method
 import java.util.Collections
 
 /**
- * 系统级 Hook 安装器，全部逻辑只在 system_server 内执行。
+ * Installs all system_server hooks.
  *
- * 拦截点（对齐原版 DoNotTryAccessibility 并修复其中问题）：
+ * Covered entry points:
  * 1. AccessibilityManagerService.addClient
- *      黑名单应用注册无障碍客户端时直接返回 0（等价于"无任何已启用服务"）。
+ *    A blocked app gets a zero client state and is not registered for updates.
  * 2. AccessibilityManagerService.getEnabledAccessibilityServiceList
- *      黑名单应用查询已启用服务列表时返回空列表。
- * 3. AccessibilityManagerService.getInstalledAccessibilityServiceList
- *      深度隐藏（可选，原版中注释未启用）：连已安装的无障碍服务也返回空。
- * 4. ContentProvider$Transport.call
- *      黑名单应用通过 Settings.Secure 读取
- *      ENABLED_ACCESSIBILITY_SERVICES / ACCESSIBILITY_ENABLED 时改写返回值。
- *
- * 修复的原版问题：
- * - 原版 call 拦截里 `args(1) != AUTHORITY && args(2) != "GET_secure"`
- *   用了 && 短路，authority 匹配但 method 不匹配时会漏放行；本版改为
- *   按参数值定位 authority/method/key 的通用匹配，不依赖固定下标，
- *   同时兼容新旧两种 call 签名。
- * - 原版按 getNameForUid 判断包名，共享 uid 会漏判；本版改用
- *   getPackagesForUid。
+ *    A blocked app gets an empty list.
+ * 3. IAccessibilityManager binder transactions 3 (addClient) and
+ *    6 (getEnabledAccessibilityServiceList). This is the reliable fallback on
+ *    Android 17, where ART may not invoke the service-level hooks.
+ * 4. AccessibilityManagerService.getInstalledAccessibilityServiceList
+ *    Optional deep hiding: a blocked app sees no installed services either.
+ * 5. SettingsProvider.call
+ *    A blocked app gets empty/zero values for the two accessibility secure
+ *    settings while the real settings stay intact for everyone else.
  */
 object SystemHook {
 
     private const val GET_SECURE = "GET_secure"
     private const val GENERATION_INDEX_KEY = "_generation_index"
+    private const val SETTINGS_PROVIDER_PACKAGE = "com.android.providers.settings"
+    private const val SETTINGS_PROVIDER_CLASS = "com.android.providers.settings.SettingsProvider"
+
+    @Volatile
+    private var settingsProviderHooked = false
 
     fun install(xposed: XposedInterface, classLoader: ClassLoader) {
         RemoteConfig.init(xposed)
-        val amsOk = hookAccessibilityManagerService(xposed, classLoader)
-        val providerOk = hookSettingsProvider(xposed)
+        settingsProviderHooked = false
+
+        val servicesOk = hookAccessibilityManagerService(xposed, classLoader)
+        val binderOk = hookAccessibilityManagerTransactions(xposed, classLoader)
+        val settingsOk = hookSettingsProviderClass(xposed, classLoader)
+
         xposed.log(
-            Log.INFO, MainHook.TAG,
-            "install finished: ams=$amsOk, settingsProvider=$providerOk"
+            Log.INFO,
+            MainHook.TAG,
+            "system hooks installed: services=$servicesOk, binder=$binderOk, " +
+                "settings=$settingsOk"
         )
     }
 
-    // ---------------------------------------------------------------- AMS
+    // ------------------------------------------------------------- services
 
     private fun hookAccessibilityManagerService(
         xposed: XposedInterface,
@@ -58,14 +65,12 @@ object SystemHook {
             xposed.log(Log.ERROR, MainHook.TAG, "AccessibilityManagerService not found", t)
             return false
         }
+
         var hooked = 0
-        for (m in ams.declaredMethods) {
-            // 按方法名匹配（AOSP main 2026-09 核对：三个方法均只有唯一同名重载），
-            // 不绑定参数个数，避免未来 Android 签名漂移导致 Hook 静默失效；
-            // 返回值在运行时按实际 returnType 决定。
+        for (method in ams.declaredMethods) {
             when {
-                m.name == "addClient" -> {
-                    hookSafely(xposed, m) { chain ->
+                method.name == "addClient" -> {
+                    hookSafely(xposed, method) { chain ->
                         if (RemoteConfig.isBlocked(Binder.getCallingUid())) {
                             zeroFor((chain.executable as Method).returnType)
                         } else {
@@ -75,9 +80,9 @@ object SystemHook {
                     hooked++
                 }
 
-                m.name == "getEnabledAccessibilityServiceList" &&
-                    List::class.java.isAssignableFrom(m.returnType) -> {
-                    hookSafely(xposed, m) { chain ->
+                method.name == "getEnabledAccessibilityServiceList" &&
+                    List::class.java.isAssignableFrom(method.returnType) -> {
+                    hookSafely(xposed, method) { chain ->
                         if (RemoteConfig.isBlocked(Binder.getCallingUid())) {
                             Collections.emptyList<Any>()
                         } else {
@@ -87,11 +92,10 @@ object SystemHook {
                     hooked++
                 }
 
-                m.name == "getInstalledAccessibilityServiceList" -> {
-                    hookSafely(xposed, m) { chain ->
-                        if (RemoteConfig.isDeepHide() &&
-                            RemoteConfig.isBlocked(Binder.getCallingUid())
-                        ) {
+                method.name == "getInstalledAccessibilityServiceList" -> {
+                    hookSafely(xposed, method) { chain ->
+                        val uid = Binder.getCallingUid()
+                        if (RemoteConfig.isDeepHide() && RemoteConfig.isBlocked(uid)) {
                             emptySlice((chain.executable as Method).returnType)
                         } else {
                             chain.proceed()
@@ -101,11 +105,78 @@ object SystemHook {
                 }
             }
         }
-        xposed.log(Log.INFO, MainHook.TAG, "hooked $hooked AccessibilityManagerService methods")
         return hooked > 0
     }
 
-    /** addClient 在 Android 11 及以下返回 int、12+ 返回 long，按返回类型给零值。 */
+    /**
+     * Binder-level fallback for the two service calls that ART may inline on
+     * Android 17. Transaction codes from IAccessibilityManager:
+     * 3 = addClient, 5 = getInstalledAccessibilityServiceList,
+     * 6 = getEnabledAccessibilityServiceList.
+     */
+    private fun hookAccessibilityManagerTransactions(
+        xposed: XposedInterface,
+        classLoader: ClassLoader
+    ): Boolean {
+        val stub = try {
+            classLoader.loadClass("android.view.accessibility.IAccessibilityManager\$Stub")
+        } catch (t: Throwable) {
+            xposed.log(Log.ERROR, MainHook.TAG, "IAccessibilityManager\$Stub not found", t)
+            return false
+        }
+
+        var hooked = 0
+        for (method in stub.declaredMethods) {
+            if (method.name != "onTransact") continue
+            hookSafely(xposed, method) { chain ->
+                val code = chain.getArg(0) as? Int ?: -1
+                if (code != 3 && code != 5 && code != 6) {
+                    chain.proceed()
+                } else {
+                    val blocked = RemoteConfig.isBlocked(Binder.getCallingUid())
+                    when {
+                        !blocked -> chain.proceed()
+
+                        code == 3 -> {
+                            // Do not register the client; report zero state.
+                            val reply = chain.getArg(2) as? android.os.Parcel
+                            if (reply == null) {
+                                chain.proceed()
+                            } else {
+                                reply.setDataPosition(0)
+                                reply.writeNoException()
+                                reply.writeLong(0L)
+                                true
+                            }
+                        }
+
+                        code == 6 -> {
+                            // Return an empty enabled-service list.
+                            val reply = chain.getArg(2) as? android.os.Parcel
+                            if (reply == null) {
+                                chain.proceed()
+                            } else {
+                                reply.setDataPosition(0)
+                                reply.writeNoException()
+                                reply.writeTypedList(
+                                    Collections.emptyList<AccessibilityServiceInfo>(),
+                                    1
+                                )
+                                true
+                            }
+                        }
+
+                        // getInstalled is handled by the service hook.
+                        else -> chain.proceed()
+                    }
+                }
+            }
+            hooked++
+        }
+        return hooked > 0
+    }
+
+    /** addClient returns int before Android 12 and long from Android 12 on. */
     private fun zeroFor(type: Class<*>): Any = when (type) {
         java.lang.Long.TYPE -> 0L
         java.lang.Integer.TYPE -> 0
@@ -113,69 +184,177 @@ object SystemHook {
         else -> 0L
     }
 
-    /** 深度隐藏时返回空的 ParceledListSlice。 */
     private fun emptySlice(returnType: Class<*>): Any = try {
-        val pls = Class.forName("android.content.pm.ParceledListSlice")
-        if (returnType == pls) {
-            pls.getMethod("emptyList").invoke(null)
+        val slice = Class.forName("android.content.pm.ParceledListSlice")
+        if (returnType == slice) {
+            slice.getMethod("emptyList").invoke(null)
         } else {
             Collections.emptyList<Any>()
         }
-    } catch (t: Throwable) {
+    } catch (_: Throwable) {
         Collections.emptyList<Any>()
     }
 
-    // ------------------------------------------------- Settings Provider
+    // ------------------------------------------------------------- settings
 
-    private fun hookSettingsProvider(xposed: XposedInterface): Boolean {
-        val transport = try {
-            Class.forName("android.content.ContentProvider\$Transport")
-        } catch (t: Throwable) {
-            xposed.log(Log.ERROR, MainHook.TAG, "ContentProvider\$Transport not found", t)
-            return false
+    /**
+     * SettingsProvider is loaded from its own APK by a child classloader, not
+     * by the classloader used for system_server. Hook the live provider class
+     * through ActivityThread so the hook lands on the copy that actually runs.
+     */
+    private fun hookSettingsProviderClass(
+        xposed: XposedInterface,
+        classLoader: ClassLoader
+    ): Boolean {
+        val direct = findSettingsProviderClass(classLoader)
+        if (direct != null && hookSettingsProviderMethods(xposed, direct)) {
+            return true
         }
+
+        // SettingsProvider may still be installing while the module starts.
+        Thread {
+            for (attempt in 0 until 120) {
+                if (settingsProviderHooked) return@Thread
+                try {
+                    Thread.sleep(250)
+                    val provider = findSettingsProviderClass(classLoader)
+                    if (provider != null &&
+                        hookSettingsProviderMethods(xposed, provider)
+                    ) {
+                        return@Thread
+                    }
+                } catch (_: Throwable) {
+                    // Retry until the provider appears.
+                }
+            }
+            xposed.log(
+                Log.WARN,
+                MainHook.TAG,
+                "SettingsProvider not available; accessibility settings may remain visible"
+            )
+        }.start()
+        return false
+    }
+
+    private fun findSettingsProviderClass(classLoader: ClassLoader): Class<*>? {
+        return try {
+            val activityThreadClass = classLoader.loadClass("android.app.ActivityThread")
+            val activityThread = activityThreadClass
+                .getMethod("currentActivityThread")
+                .invoke(null)
+
+            if (activityThread != null) {
+                for (fieldName in listOf("mLocalProviders", "mProviderMap")) {
+                    val field = activityThreadClass.getDeclaredField(fieldName)
+                    field.isAccessible = true
+                    val map = field.get(activityThread) as? Map<*, *> ?: continue
+                    for (value in map.values) {
+                        val provider = fieldValue(value, "mLocalProvider") as? ContentProvider
+                        if (provider != null &&
+                            provider.javaClass.name == SETTINGS_PROVIDER_CLASS
+                        ) {
+                            return provider.javaClass
+                        }
+                    }
+                }
+
+                // Fallback: ask LoadedApk for the provider package classloader.
+                val packagesField = activityThreadClass.getDeclaredField("mPackages")
+                packagesField.isAccessible = true
+                val packages = packagesField.get(activityThread) as? Map<*, *>
+                if (packages != null) {
+                    val reference = packages[SETTINGS_PROVIDER_PACKAGE]
+                    if (reference != null) {
+                        val loadedApk = try {
+                            reference.javaClass.getMethod("get").invoke(reference)
+                        } catch (_: Throwable) {
+                            reference
+                        }
+                        if (loadedApk != null) {
+                            val providerClassLoader = loadedApk.javaClass
+                                .getMethod("getClassLoader")
+                                .invoke(loadedApk) as? ClassLoader
+                            if (providerClassLoader != null) {
+                                return providerClassLoader.loadClass(SETTINGS_PROVIDER_CLASS)
+                            }
+                        }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun hookSettingsProviderMethods(
+        xposed: XposedInterface,
+        provider: Class<*>
+    ): Boolean {
+        if (settingsProviderHooked) return true
+
         var hooked = 0
-        for (m in transport.declaredMethods) {
-            if (m.name != "call") continue
-            val paramTypes = m.parameterTypes
-            // 兼容两种签名：
-            // 新: call(AttributionSource, String authority, String method, String arg, Bundle extras)
-            // 旧: call(String authority, String method, String arg, Bundle extras)
-            if (paramTypes.size < 4 || paramTypes[paramTypes.size - 1] != Bundle::class.java) continue
-            hookSafely(xposed, m) { chain ->
+        for (method in provider.declaredMethods) {
+            if (method.name != "call") continue
+            val parameterTypes = method.parameterTypes
+            if (parameterTypes.size < 3 ||
+                parameterTypes[parameterTypes.size - 1] != Bundle::class.java
+            ) {
+                continue
+            }
+
+            hookSafely(xposed, method) { chain ->
+                // Capture before the provider can clear/restore calling identity.
+                val uid = Binder.getCallingUid()
                 val result = chain.proceed()
-                sanitizeSettingsResult(chain, result)
+                sanitizeSettingsBundle(uid, chain.args, result)
                 result
             }
             hooked++
         }
-        xposed.log(Log.INFO, MainHook.TAG, "hooked $hooked Transport.call overloads")
-        return hooked > 0
+
+        settingsProviderHooked = hooked > 0
+        return settingsProviderHooked
     }
 
-    /**
-     * 通用匹配：在参数列表里按值定位 authority / method / key，
-     * 不依赖固定下标。要求 authority 出现在 method 之前，避免误匹配。
-     */
-    private fun sanitizeSettingsResult(chain: XposedInterface.Chain, result: Any?) {
-        if (result !is Bundle) return
-        val args = chain.args
-        var authorityIndex = -1
+    private fun fieldValue(target: Any?, name: String): Any? = try {
+        if (target == null) {
+            null
+        } else {
+            val field = target.javaClass.getDeclaredField(name)
+            field.isAccessible = true
+            field.get(target)
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun sanitizeSettingsBundle(
+        uid: Int,
+        args: List<Any?>,
+        result: Any?
+    ) {
+        if (result !is Bundle || !RemoteConfig.isBlocked(uid)) return
+
         var methodIndex = -1
-        var keyIndex = -1
+        var authorityIndex = -1
         for (i in args.indices) {
             when (args[i]) {
-                Settings.AUTHORITY -> authorityIndex = i
                 GET_SECURE -> {
                     methodIndex = i
-                    keyIndex = i + 1
+                    break
                 }
+
+                Settings.AUTHORITY -> authorityIndex = i
             }
         }
-        if (methodIndex < 0 || authorityIndex < 0 || authorityIndex > methodIndex) return
-        if (keyIndex >= args.size || keyIndex <= methodIndex) return
-        val key = args[keyIndex] as? String ?: return
-        if (!RemoteConfig.isBlocked(Binder.getCallingUid())) return
+        if (methodIndex < 0 || methodIndex + 1 >= args.size) return
+        // For ContentProvider.Transport.call the authority precedes the method.
+        // SettingsProvider.call has no authority argument, so it is only
+        // required when present.
+        if (authorityIndex >= 0 && authorityIndex > methodIndex) return
+
+        val key = args[methodIndex + 1] as? String ?: return
         when (key) {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES -> {
                 result.putString(Settings.NameValueTable.VALUE, "")
@@ -189,7 +368,7 @@ object SystemHook {
         }
     }
 
-    // ------------------------------------------------------------ utils
+    // ---------------------------------------------------------------- utils
 
     private fun hookSafely(
         xposed: XposedInterface,
