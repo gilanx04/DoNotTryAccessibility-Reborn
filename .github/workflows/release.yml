@@ -107,6 +107,7 @@ jobs:
 
             - Upstream source: https://github.com/zjz-Beiming/DoNotTryAccessibility-Reborn
             - Built from commit: `${{ github.sha }}`
+            - UI language: English
             - License: GPL-3.0
             - Signing certificate SHA-256: `97:6B:80:67:DA:AC:2C:EE:A3:38:9C:40:90:22:64:89:C4:D5:10:24:67:28:88:B2:CF:5F:3E:FB:95:3B:13:E9`
             - Requires: Android 8.0+ (API 26), LSPosed 2.2.0+ / libxposed API 102 (or Vector 2.2+)

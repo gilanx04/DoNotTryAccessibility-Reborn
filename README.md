@@ -1,5 +1,5 @@
 > [!WARNING]
-> **Unofficial builds.** This is a fork maintained by [@gilanx04](https://github.com/gilanx04). It only adds automated builds and GitHub Releases; the application source code comes from the upstream project. It is **not affiliated with or endorsed by** the original author.
+> **Unofficial builds.** This is a fork maintained by [@gilanx04](https://github.com/gilanx04). It adds automated builds, GitHub Releases, and an English app UI. The application logic is based on the upstream project. It is **not affiliated with or endorsed by** the original author.
 >
 > **Download:** [Releases](https://github.com/gilanx04/DoNotTryAccessibility-Reborn/releases) · **Upstream:** [zjz-Beiming/DoNotTryAccessibility-Reborn](https://github.com/zjz-Beiming/DoNotTryAccessibility-Reborn)
 >

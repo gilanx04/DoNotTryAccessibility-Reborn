@@ -7,10 +7,13 @@ https://github.com/zjz-Beiming/DoNotTryAccessibility-Reborn
 Modifications in this fork:
 - Added a GitHub Actions workflow to build and publish APK releases.
 - Added a README notice and this NOTICE file.
+- Translated the user-interface strings to English.
+- Bumped the versionCode for the translated build.
 - Release APKs are signed with a separate release key.
 
-The application source code is unchanged from the upstream commit unless
-otherwise stated in the release description.
+Except for the UI localization and build metadata, the application source
+code is unchanged from the upstream commit unless otherwise stated in the
+release description.
 
 This program is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the Free
