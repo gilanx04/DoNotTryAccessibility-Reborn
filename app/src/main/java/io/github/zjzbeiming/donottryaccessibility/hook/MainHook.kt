@@ -13,7 +13,7 @@ import java.io.File
  * 模块入口。声明于 META-INF/xposed/java_init.list。
  *
  * 作用域（scope.list）：
- * - android：核心逻辑，在 system_server 内拦截无障碍服务查询，
+ * - system：核心逻辑，在 system_server 内拦截无障碍服务查询，
  *   让黑名单应用读到"没有开启任何无障碍服务"的伪造结果。
  * - 自身包名：激活自检，注入模块 UI 进程后写标记文件，
  *   供界面显示 Hook 是否已生效。
