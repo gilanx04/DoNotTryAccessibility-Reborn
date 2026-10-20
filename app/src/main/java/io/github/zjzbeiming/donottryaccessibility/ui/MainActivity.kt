@@ -3,10 +3,12 @@ package io.github.zjzbeiming.donottryaccessibility.ui
 import android.app.Activity
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
+import android.view.WindowInsets
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.CheckBox
@@ -51,6 +53,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        applyWindowInsets(findViewById(R.id.root))
         statusView = findViewById(R.id.status)
         deepHideSwitch = findViewById(R.id.deep_hide)
         showSystemSwitch = findViewById(R.id.show_system)
@@ -96,6 +99,50 @@ class MainActivity : Activity(), App.ServiceStateListener {
         })
 
         App.addListener(this, true)
+    }
+
+    /**
+     * Android 15+ enforces edge-to-edge for this target SDK, so the decor view no
+     * longer applies system-bar insets automatically. Apply them to the root
+     * container ourselves; otherwise the top rows are drawn under the status bar.
+     */
+    private fun applyWindowInsets(root: View) {
+        val baseLeft = root.paddingLeft
+        val baseTop = root.paddingTop
+        val baseRight = root.paddingRight
+        val baseBottom = root.paddingBottom
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val left: Int
+            val top: Int
+            val right: Int
+            val bottom: Int
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(
+                    WindowInsets.Type.systemBars() or WindowInsets.Type.ime()
+                )
+                left = bars.left
+                top = bars.top
+                right = bars.right
+                bottom = bars.bottom
+            } else {
+                @Suppress("DEPRECATION")
+                left = insets.systemWindowInsetLeft
+                @Suppress("DEPRECATION")
+                top = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                right = insets.systemWindowInsetRight
+                @Suppress("DEPRECATION")
+                bottom = insets.systemWindowInsetBottom
+            }
+            view.setPadding(
+                baseLeft + left,
+                baseTop + top,
+                baseRight + right,
+                baseBottom + bottom
+            )
+            insets
+        }
+        root.requestApplyInsets()
     }
 
     override fun onDestroy() {

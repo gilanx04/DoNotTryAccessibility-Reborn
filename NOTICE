@@ -11,9 +11,9 @@ Modifications in this fork:
 - Bumped the versionCode for the translated build.
 - Release APKs are signed with a separate release key.
 
-Except for the UI localization and build metadata, the application source
-code is unchanged from the upstream commit unless otherwise stated in the
-release description.
+Except for the UI localization, system-bar inset handling, and build
+metadata, the application source code is unchanged from the upstream commit
+unless otherwise stated in the release description.
 
 This program is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the Free
