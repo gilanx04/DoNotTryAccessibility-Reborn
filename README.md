@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Unofficial builds.** This is a fork maintained by [@gilanx04](https://github.com/gilanx04). It only adds automated builds and GitHub Releases; the application source code comes from the upstream project. It is **not affiliated with or endorsed by** the original author.
+>
+> **Download:** [Releases](https://github.com/gilanx04/DoNotTryAccessibility-Reborn/releases) · **Upstream:** [zjz-Beiming/DoNotTryAccessibility-Reborn](https://github.com/zjz-Beiming/DoNotTryAccessibility-Reborn)
+>
+> Release APKs are signed with a separate release key. Uninstall any previous build before installing.
+
 # DoNotTryAccessibility Reborn
 
 **让被拉黑的应用"以为"设备上没有开启任何无障碍服务。**

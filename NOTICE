@@ -1,0 +1,18 @@
+DoNotTryAccessibility Reborn
+Copyright (C) 2026 zjz-Beiming and contributors
+
+This repository is a fork of:
+https://github.com/zjz-Beiming/DoNotTryAccessibility-Reborn
+
+Modifications in this fork:
+- Added a GitHub Actions workflow to build and publish APK releases.
+- Added a README notice and this NOTICE file.
+- Release APKs are signed with a separate release key.
+
+The application source code is unchanged from the upstream commit unless
+otherwise stated in the release description.
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See LICENSE for the full license text.
