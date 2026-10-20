@@ -168,8 +168,10 @@ class MainActivity : Activity(), App.ServiceStateListener {
             }
             statusView.text = status
             if (service != null) {
-                loadConfig(service)
+                // 先建好应用列表，再读取勾选状态；否则 loadApps 会用默认未勾选
+                // 覆盖 loadConfig 刚恢复的选择，导致离开页面后勾选看起来丢失。
                 loadApps(service)
+                loadConfig(service)
                 refilter()
             }
         }
